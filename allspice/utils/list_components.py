@@ -419,6 +419,10 @@ def list_components_for_altium(
             raise ValueError(f"Variant {variant} not found in PrjPcb file.")
 
         components = _apply_variations(components, variant_details, allspice_client.logger)
+    else:
+        for component in components:
+            component["_fitted"] = "True"
+            component["_variation_kind"] = ""
 
     return _filter_blank_components(components, allspice_client.logger)
 
@@ -639,13 +643,24 @@ def _list_components_multi_page_schematic(
                 var_state = component["variants"][variant_id]
 
                 if var_state is not None:
-                    # replace component
+                    # Component is overridden in this variant (ALT_COMP or FITTED_MOD_PARAMS).
+                    # The multi-page JSON doesn't expose the kind integer, so we can't
+                    # distinguish the two; both are fitted. _variation_kind is set to
+                    # "ALT_COMP" as the best available approximation.
                     component_attributes = _component_attributes_multi_page(var_state)
-                    components.append(component_attributes)
-                # otherwise, not fitted
+                    component_attributes["_fitted"] = "True"
+                    component_attributes["_variation_kind"] = "ALT_COMP"
+                else:
+                    # not fitted in this variant — include with fitted=False
+                    component_attributes = _component_attributes_multi_page(component)
+                    component_attributes["_fitted"] = "False"
+                    component_attributes["_variation_kind"] = "NOT_FITTED"
+                components.append(component_attributes)
 
             else:
                 component_attributes = _component_attributes_multi_page(component)
+                component_attributes["_fitted"] = "True"
+                component_attributes["_variation_kind"] = ""
                 components.append(component_attributes)
 
     return _filter_blank_components(components, allspice_client.logger)
@@ -1253,11 +1268,14 @@ def _apply_variations(
     :param variant_details: The section of the config file dealing with a
         specific variant.
 
-    :returns: The components with the variations applied.
+    :returns: The components with the variations applied. Each component will
+        have a ``_fitted`` attribute (``"True"`` or ``"False"``) and a
+        ``_variation_kind`` attribute (``"FITTED_MOD_PARAMS"``,
+        ``"NOT_FITTED"``, ``"ALT_COMP"``, or ``""`` for unmodified components).
     """
 
-    # List of component UniqueIDs to remove from the BOM.
-    components_to_remove: list[str] = []
+    # Map of component UniqueID -> VariationKind for all explicitly varied components.
+    components_variation_kind: dict[str, VariationKind] = {}
     # When patching components, the ParamVariation doesn't have the unique ID,
     # only a designator. However, ParamVariations follow the Variation entry, so
     # if we note down the last unique id we saw for a designator when going
@@ -1292,9 +1310,8 @@ def _apply_variations(
                 )
                 continue
 
-            if kind == VariationKind.NOT_FITTED:
-                components_to_remove.append(unique_id)
-            else:
+            components_variation_kind[unique_id] = kind
+            if kind != VariationKind.NOT_FITTED:
                 patch_component_unique_id[designator] = unique_id
         elif re.match(r"paramvariation[\d]+", key):
             variation_id = key.split("paramvariation")[-1]
@@ -1331,16 +1348,17 @@ def _apply_variations(
 
     for component in components:
         unique_id = component["_unique_id"]
-        if unique_id in components_to_remove:
-            continue
+        kind = components_variation_kind.get(unique_id)
+
+        new_component = component.copy()
+        new_component["_fitted"] = "False" if kind == VariationKind.NOT_FITTED else "True"
+        new_component["_variation_kind"] = kind.name if kind is not None else ""
 
         if unique_id in components_to_patch:
-            new_component = component.copy()
             for parameter, value in components_to_patch[unique_id]:
                 new_component[parameter] = value
-            final_components.append(new_component)
-        else:
-            final_components.append(component)
+
+        final_components.append(new_component)
 
     return final_components
 

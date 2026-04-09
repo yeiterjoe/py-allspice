@@ -20,6 +20,7 @@ from allspice.utils.bom_generation import (
     generate_bom_for_system_capture,
 )
 from allspice.utils.list_components import (
+    _apply_variations,
     _combine_multi_part_components_for_dehdl,
     _resolve_prjpcb_relative_path,
     list_components_for_altium,
@@ -818,6 +819,147 @@ def test_combine_multi_part_components_for_dehdl():
     assert len(result) == 4
     locations = {comp["LOCATION"] for comp in result}
     assert locations == {"UT4", "UT7", "R1", "C1"}
+
+
+def _make_variant_section(variations: dict[str, str]) -> "configparser.SectionProxy":
+    """Build a configparser.SectionProxy from a plain dict for use in _apply_variations tests."""
+    import configparser
+
+    cfg = configparser.ConfigParser(interpolation=None)
+    cfg.read_dict({"Variant": variations})
+    return cfg["Variant"]
+
+
+def test_apply_variations_not_fitted_tags_component():
+    """NOT_FITTED components are kept but tagged with _fitted=False and _variation_kind=NOT_FITTED."""
+    import logging
+
+    components = [
+        {"_unique_id": "UID-R1", "Designator": "R1", "PART_NUMBER": "RES-100"},
+        {"_unique_id": "UID-C1", "Designator": "C1", "PART_NUMBER": "CAP-10N"},
+    ]
+    variant_section = _make_variant_section(
+        {"Variation1": "Designator=R1|UniqueId=UID-R1|Kind=1|AlternatePart="}
+    )
+
+    result = _apply_variations(components, variant_section, logging.getLogger())
+
+    assert len(result) == 2
+
+    r1 = next(c for c in result if c["_unique_id"] == "UID-R1")
+    assert r1["_fitted"] == "False"
+    assert r1["_variation_kind"] == "NOT_FITTED"
+    # Original attributes preserved
+    assert r1["PART_NUMBER"] == "RES-100"
+
+    c1 = next(c for c in result if c["_unique_id"] == "UID-C1")
+    assert c1["_fitted"] == "True"
+    assert c1["_variation_kind"] == ""
+
+
+def test_apply_variations_alt_comp_tags_component_and_patches_params():
+    """ALT_COMP components are fitted=True with _variation_kind=ALT_COMP and params overridden."""
+    import logging
+
+    components = [
+        {"_unique_id": "UID-R1", "Designator": "R1", "PART_NUMBER": "RES-100"},
+    ]
+    variant_section = _make_variant_section(
+        {
+            "Variation1": "Designator=R1|UniqueId=UID-R1|Kind=2|AlternatePart=RES-200",
+            "ParamDesignator1": "R1",
+            "ParamVariation1": "ParameterName=PART_NUMBER|VariantValue=RES-200",
+        }
+    )
+
+    result = _apply_variations(components, variant_section, logging.getLogger())
+
+    assert len(result) == 1
+    r1 = result[0]
+    assert r1["_fitted"] == "True"
+    assert r1["_variation_kind"] == "ALT_COMP"
+    assert r1["PART_NUMBER"] == "RES-200"
+
+
+def test_apply_variations_fitted_mod_params_tags_component():
+    """FITTED_MOD_PARAMS (Kind=0) components are fitted=True with _variation_kind=FITTED_MOD_PARAMS."""
+    import logging
+
+    components = [
+        {"_unique_id": "UID-R1", "Designator": "R1", "PART_NUMBER": "RES-100"},
+    ]
+    variant_section = _make_variant_section(
+        {
+            "Variation1": "Designator=R1|UniqueId=UID-R1|Kind=0|AlternatePart=",
+            "ParamDesignator1": "R1",
+            "ParamVariation1": "ParameterName=PART_NUMBER|VariantValue=RES-150",
+        }
+    )
+
+    result = _apply_variations(components, variant_section, logging.getLogger())
+
+    assert len(result) == 1
+    r1 = result[0]
+    assert r1["_fitted"] == "True"
+    assert r1["_variation_kind"] == "FITTED_MOD_PARAMS"
+    assert r1["PART_NUMBER"] == "RES-150"
+
+
+def test_generate_bom_excludes_not_fitted_by_default():
+    """With include_not_fitted=False (default), DNP components are excluded from the BOM output."""
+    from unittest.mock import MagicMock, patch
+
+    from allspice.utils.bom_generation import generate_bom
+
+    fitted_component = {"_unique_id": "UID-R1", "_fitted": "True", "_variation_kind": "", "PART_NUMBER": "RES-100"}
+    dnp_component = {"_unique_id": "UID-C1", "_fitted": "False", "_variation_kind": "NOT_FITTED", "PART_NUMBER": "CAP-10N"}
+
+    mock_client = MagicMock()
+    mock_repo = MagicMock()
+
+    with patch("allspice.utils.bom_generation.list_components", return_value=[fitted_component, dnp_component]):
+        with patch("allspice.utils.bom_generation.infer_project_tool", return_value=MagicMock()):
+            bom = generate_bom(
+                mock_client,
+                mock_repo,
+                "test.PrjPcb",
+                columns={"Part Number": "_fitted"},
+                remove_non_bom_components=False,
+            )
+
+    assert len(bom) == 1
+    assert bom[0]["Part Number"] == "True"
+
+
+def test_generate_bom_includes_not_fitted_when_requested():
+    """With include_not_fitted=True, DNP components appear in the BOM with _fitted=False."""
+    from unittest.mock import MagicMock, patch
+
+    from allspice.utils.bom_generation import generate_bom
+
+    fitted_component = {"_unique_id": "UID-R1", "_fitted": "True", "_variation_kind": "", "PART_NUMBER": "RES-100"}
+    dnp_component = {"_unique_id": "UID-C1", "_fitted": "False", "_variation_kind": "NOT_FITTED", "PART_NUMBER": "CAP-10N"}
+
+    mock_client = MagicMock()
+    mock_repo = MagicMock()
+
+    with patch("allspice.utils.bom_generation.list_components", return_value=[fitted_component, dnp_component]):
+        with patch("allspice.utils.bom_generation.infer_project_tool", return_value=MagicMock()):
+            bom = generate_bom(
+                mock_client,
+                mock_repo,
+                "test.PrjPcb",
+                columns={"Fitted": "_fitted", "Variation": "_variation_kind"},
+                remove_non_bom_components=False,
+                include_not_fitted=True,
+            )
+
+    assert len(bom) == 2
+    fitted_rows = [r for r in bom if r["Fitted"] == "True"]
+    dnp_rows = [r for r in bom if r["Fitted"] == "False"]
+    assert len(fitted_rows) == 1
+    assert len(dnp_rows) == 1
+    assert dnp_rows[0]["Variation"] == "NOT_FITTED"
 
 
 @pytest.mark.vcr

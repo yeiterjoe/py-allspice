@@ -117,6 +117,7 @@ def generate_bom(
     ref: Ref = "main",
     remove_non_bom_components: bool = True,
     design_reuse_repos: list[Repository] = [],
+    include_not_fitted: bool = False,
 ) -> Bom:
     """
     Generate a BOM for a project.
@@ -143,6 +144,12 @@ def generate_bom(
         of the component, and "_reference" and "_logical_reference" may be
         added, which are the name of the component, and the logical reference
         of a multi-part component respectively.
+
+        Two synthetic attributes are always available for Altium projects:
+        ``_fitted`` (``"True"`` or ``"False"``) and ``_variation_kind``
+        (``"FITTED_MOD_PARAMS"``, ``"NOT_FITTED"``, ``"ALT_COMP"``, or ``""``
+        for unmodified components). These can be included as column values to
+        report fitted/DNP/alternate status in the BOM output.
     :param group_by: A list of columns to group the BOM by. If this is provided,
         the BOM will be grouped by the values of these columns.
     :param variant: The variant of the project to generate the BOM for. If this
@@ -155,6 +162,10 @@ def generate_bom(
     :param remove_non_bom_components: If True, components of types that should
         not be included in the BOM will be removed. Defaults to True. Only
         applicable for Altium and DeHDL projects.
+    :param include_not_fitted: If True, components marked as not fitted (DNP)
+        in the selected variant will be included in the BOM output with
+        ``_fitted`` set to ``"False"``. If False (the default), not-fitted
+        components are excluded, preserving previous behaviour.
     :return: A list of BOM entries. Each entry is a dictionary where the key is
         a column name and the value is the value for that column.
     """
@@ -177,6 +188,9 @@ def generate_bom(
         combine_multi_part=True,
         design_reuse_repos=design_reuse_repos,
     )
+
+    if not include_not_fitted:
+        components = [c for c in components if c.get("_fitted", "True") != "False"]
 
     if remove_non_bom_components:
         project_tool = infer_project_tool(source_file)
@@ -213,6 +227,7 @@ def generate_bom_for_altium(
     ref: Ref = "main",
     remove_non_bom_components: bool = True,
     design_reuse_repos: list[Repository] = [],
+    include_not_fitted: bool = False,
 ) -> Bom:
     """
     Generate a BOM for an Altium project.
@@ -229,6 +244,11 @@ def generate_bom_for_altium(
         "_part_id", "_description", "_unique_id" and "_kind", which are the
         Library Reference, Description, Unique ID and Component Type
         respectively.
+
+        Two synthetic attributes are always available: ``_fitted``
+        (``"True"`` or ``"False"``) and ``_variation_kind``
+        (``"FITTED_MOD_PARAMS"``, ``"NOT_FITTED"``, ``"ALT_COMP"``, or ``""``
+        for unmodified components).
     :param group_by: A list of columns to group the BOM by. If this is provided,
         the BOM will be grouped by the values of these columns.
     :param ref: The ref, i.e. branch, commit or git ref from which to take the
@@ -239,6 +259,10 @@ def generate_bom_for_altium(
         default variant.
     :param remove_non_bom_components: If True, components of types that should
         not be included in the BOM will be removed. Defaults to True.
+    :param include_not_fitted: If True, components marked as not fitted (DNP)
+        in the selected variant will be included in the BOM output with
+        ``_fitted`` set to ``"False"``. If False (the default), not-fitted
+        components are excluded, preserving previous behaviour.
     :return: A list of BOM entries. Each entry is a dictionary where the key is
         a column name and the value is the value for that column.
     """
@@ -253,6 +277,7 @@ def generate_bom_for_altium(
         ref,
         remove_non_bom_components,
         design_reuse_repos=design_reuse_repos,
+        include_not_fitted=include_not_fitted,
     )
 
 
