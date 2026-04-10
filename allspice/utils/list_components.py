@@ -1289,7 +1289,7 @@ def _apply_variations(
     for key, value in variant_details.items():
         # Note that this is in lowercase, as configparser stores all keys in
         # lowercase.
-        if re.match(r"variation[\d+]", key):
+        if re.match(r"variation\d+", key):
             variation_details = dict(details.split("=", 1) for details in value.split("|"))
             try:
                 designator = variation_details["Designator"]
@@ -1313,7 +1313,7 @@ def _apply_variations(
             components_variation_kind[unique_id] = kind
             if kind != VariationKind.NOT_FITTED:
                 patch_component_unique_id[designator] = unique_id
-        elif re.match(r"paramvariation[\d]+", key):
+        elif re.match(r"paramvariation\d+", key):
             variation_id = key.split("paramvariation")[-1]
             designator = variant_details[f"ParamDesignator{variation_id}"]
             variation_details = dict(details.split("=", 1) for details in value.split("|"))
@@ -1344,18 +1344,37 @@ def _apply_variations(
 
             components_to_patch.setdefault(unique_id, []).append(parameter_patch)
 
+    # The PrjPcb and SchDoc JSON can store different unique IDs for the same
+    # sheet symbol, causing full-path lookups to fail. Build a secondary index
+    # by leaf ID (the component's own unique ID, which is consistent across
+    # both files) as a fallback.
+    components_variation_kind_by_leaf = {
+        uid.rsplit("\\", 1)[-1]: kind
+        for uid, kind in components_variation_kind.items()
+    }
+    components_to_patch_by_leaf = {
+        uid.rsplit("\\", 1)[-1]: patches
+        for uid, patches in components_to_patch.items()
+    }
+
     final_components = []
 
     for component in components:
         unique_id = component["_unique_id"]
+        leaf_id = unique_id.rsplit("\\", 1)[-1]
+
         kind = components_variation_kind.get(unique_id)
+        if kind is None:
+            kind = components_variation_kind_by_leaf.get(leaf_id)
+
+        patches = components_to_patch.get(unique_id) or components_to_patch_by_leaf.get(leaf_id)
 
         new_component = component.copy()
         new_component["_fitted"] = "False" if kind == VariationKind.NOT_FITTED else "True"
         new_component["_variation_kind"] = kind.name if kind is not None else ""
 
-        if unique_id in components_to_patch:
-            for parameter, value in components_to_patch[unique_id]:
+        if patches:
+            for parameter, value in patches:
                 new_component[parameter] = value
 
         final_components.append(new_component)

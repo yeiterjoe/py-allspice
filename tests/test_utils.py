@@ -905,6 +905,55 @@ def test_apply_variations_fitted_mod_params_tags_component():
     assert r1["PART_NUMBER"] == "RES-150"
 
 
+def test_apply_variations_sheet_uid_mismatch():
+    """Leaf-ID fallback matches when PrjPcb sheet UID differs from SchDoc JSON sheet UID."""
+    import logging
+
+    # Component _unique_id uses DBWIPUYZ (from SchDoc JSON)
+    # Variation UniqueId uses GFJQJVVU (from PrjPcb) — same leaf, different parent
+    components = [
+        {"_unique_id": "\\DBWIPUYZ\\SMWDAPJN", "Designator": "R14", "PART_NUMBER": "RES-100"},
+        {"_unique_id": "\\DBWIPUYZ\\IIQUFYYE", "Designator": "C15", "PART_NUMBER": "CAP-10N"},
+    ]
+    variant_section = _make_variant_section(
+        {
+            "Variation1": "Designator=R14|UniqueId=\\GFJQJVVU\\SMWDAPJN|Kind=1|AlternatePart=",
+            "Variation2": "Designator=C15|UniqueId=\\GFJQJVVU\\IIQUFYYE|Kind=1|AlternatePart=",
+        }
+    )
+
+    result = _apply_variations(components, variant_section, logging.getLogger())
+
+    assert len(result) == 2
+    r14 = next(c for c in result if c["Designator"] == "R14")
+    c15 = next(c for c in result if c["Designator"] == "C15")
+    assert r14["_fitted"] == "False"
+    assert r14["_variation_kind"] == "NOT_FITTED"
+    assert c15["_fitted"] == "False"
+    assert c15["_variation_kind"] == "NOT_FITTED"
+
+
+def test_apply_variations_multi_digit_variation_numbers():
+    """Variation keys with numbers >= 10 must be parsed (regression: [\\d+] only matched one digit)."""
+    import logging
+
+    components = [{"_unique_id": f"UID-{i}", "Designator": f"R{i}", "PART_NUMBER": "RES"} for i in range(1, 15)]
+    # Variation10 through Variation13 are NOT_FITTED
+    variant_section = _make_variant_section(
+        {f"Variation{i}": f"Designator=R{i}|UniqueId=UID-{i}|Kind=1|AlternatePart=" for i in range(10, 14)}
+    )
+
+    result = _apply_variations(components, variant_section, logging.getLogger())
+
+    assert len(result) == 14
+    for i in range(10, 14):
+        comp = next(c for c in result if c["_unique_id"] == f"UID-{i}")
+        assert comp["_fitted"] == "False", f"R{i} should be NOT_FITTED"
+    for i in list(range(1, 10)) + list(range(14, 15)):
+        comp = next(c for c in result if c["_unique_id"] == f"UID-{i}")
+        assert comp["_fitted"] == "True", f"R{i} should be fitted"
+
+
 def test_generate_bom_excludes_not_fitted_by_default():
     """With include_not_fitted=False (default), DNP components are excluded from the BOM output."""
     from unittest.mock import MagicMock, patch
