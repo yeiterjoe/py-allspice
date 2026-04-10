@@ -1289,7 +1289,7 @@ def _apply_variations(
     for key, value in variant_details.items():
         # Note that this is in lowercase, as configparser stores all keys in
         # lowercase.
-        if re.match(r"variation\d+", key):
+        if re.match(r"variation[\d+]", key):
             variation_details = dict(details.split("=", 1) for details in value.split("|"))
             try:
                 designator = variation_details["Designator"]
@@ -1313,7 +1313,7 @@ def _apply_variations(
             components_variation_kind[unique_id] = kind
             if kind != VariationKind.NOT_FITTED:
                 patch_component_unique_id[designator] = unique_id
-        elif re.match(r"paramvariation\d+", key):
+        elif re.match(r"paramvariation[\d]+", key):
             variation_id = key.split("paramvariation")[-1]
             designator = variant_details[f"ParamDesignator{variation_id}"]
             variation_details = dict(details.split("=", 1) for details in value.split("|"))

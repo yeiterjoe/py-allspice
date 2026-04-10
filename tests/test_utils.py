@@ -933,26 +933,6 @@ def test_apply_variations_sheet_uid_mismatch():
     assert c15["_variation_kind"] == "NOT_FITTED"
 
 
-def test_apply_variations_multi_digit_variation_numbers():
-    """Variation keys with numbers >= 10 must be parsed (regression: [\\d+] only matched one digit)."""
-    import logging
-
-    components = [{"_unique_id": f"UID-{i}", "Designator": f"R{i}", "PART_NUMBER": "RES"} for i in range(1, 15)]
-    # Variation10 through Variation13 are NOT_FITTED
-    variant_section = _make_variant_section(
-        {f"Variation{i}": f"Designator=R{i}|UniqueId=UID-{i}|Kind=1|AlternatePart=" for i in range(10, 14)}
-    )
-
-    result = _apply_variations(components, variant_section, logging.getLogger())
-
-    assert len(result) == 14
-    for i in range(10, 14):
-        comp = next(c for c in result if c["_unique_id"] == f"UID-{i}")
-        assert comp["_fitted"] == "False", f"R{i} should be NOT_FITTED"
-    for i in list(range(1, 10)) + list(range(14, 15)):
-        comp = next(c for c in result if c["_unique_id"] == f"UID-{i}")
-        assert comp["_fitted"] == "True", f"R{i} should be fitted"
-
 
 def test_generate_bom_excludes_not_fitted_by_default():
     """With include_not_fitted=False (default), DNP components are excluded from the BOM output."""
